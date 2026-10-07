@@ -1,0 +1,48 @@
+# Backend целиком: база + API. Запускается сам по себе, фронтенд не нужен:
+#   docker compose up -d          # база и API на :4000
+#   docker compose up -d db       # только база для разработки (pnpm dev)
+name: bizdin-backend
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: bizdin
+      POSTGRES_PASSWORD: bizdin
+      POSTGRES_DB: bizdin
+      TZ: UTC
+    ports:
+      - "5433:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bizdin -d bizdin"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: bizdin-auyl-api:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://bizdin:bizdin@db:5432/bizdin
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-in-production-0000}
+      MIGRATE_ON_START: "true"
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:4000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      REQUIRE_TOTP_FOR_PRIVILEGED: ${REQUIRE_TOTP_FOR_PRIVILEGED:-false}
+      FILES_DIR: /data/files
+    ports:
+      - "4000:4000"
+    volumes:
+      - files:/data/files
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  files:
