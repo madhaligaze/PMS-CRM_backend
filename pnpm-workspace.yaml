@@ -1,0 +1,3 @@
+# esbuild нужен инструментам разработки (tsx, vitest, drizzle-kit).
+allowBuilds:
+  esbuild: true
