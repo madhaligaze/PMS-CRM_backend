@@ -1,12 +1,16 @@
 import { buildApp } from './app.ts';
 import { loadConfig } from './config.ts';
 import { startScheduler } from './core/scheduler.ts';
+import { seedDemoIfEmpty } from './db/demo.ts';
 import { runMigrations } from './db/migrate.ts';
 
 const config = loadConfig();
 
 if (config.MIGRATE_ON_START) {
   await runMigrations(config.DATABASE_URL);
+}
+if (config.SEED_DEMO_IF_EMPTY) {
+  await seedDemoIfEmpty(config.DATABASE_URL, (msg) => console.log(`[demo] ${msg}`));
 }
 
 const app = await buildApp(config);

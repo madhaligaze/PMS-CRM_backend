@@ -42,6 +42,7 @@ pnpm test        # vitest на базе bizdin_test: сценарии, прав�
 | `PORT` | `4000` |
 | `HOST` | `::` - внутренняя сеть Railway может быть только IPv6 |
 | `MIGRATE_ON_START` | `true` |
+| `SEED_DEMO_IF_EMPTY` | `true` только для стенда показа: демо в пустую базу при старте (пароль `demo12345`) |
 | `COOKIE_SECURE` | `true` |
 | `PUBLIC_API_URL` | `https://${{web.RAILWAY_PUBLIC_DOMAIN}}` - адрес веба: браузер видит API через него |
 | `CORS_ORIGINS` | `https://${{web.RAILWAY_PUBLIC_DOMAIN}}` |

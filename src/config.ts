@@ -13,6 +13,8 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
   MIGRATE_ON_START: bool.default(false),
+  /** Стенд для показа: при старте положить демо-данные, если база пустая. */
+  SEED_DEMO_IF_EMPTY: bool.default(false),
 
   /** Секрет подписи access-токенов и ссылок на файлы. Не короче 32 символов. */
   JWT_SECRET: z.string().min(32),
