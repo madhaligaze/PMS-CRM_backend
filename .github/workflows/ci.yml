@@ -1,0 +1,85 @@
+name: CI
+
+# Отдельный репозиторий API (зеркало папки backend/ монорепозитория PMS-CRM):
+# типы, тесты на настоящем Postgres, образ собирается и стартует на пустой базе.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Типы и тесты (гонки, нагрузка, сеть гостиниц)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: bizdin
+          POSTGRES_PASSWORD: bizdin
+          POSTGRES_DB: bizdin
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U bizdin -d bizdin"
+          --health-interval 3s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Типы
+        run: pnpm typecheck
+      - name: Тесты (vitest, Postgres)
+        run: pnpm test
+
+  docker:
+    name: Образ собирается и стартует
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: bizdin
+          POSTGRES_PASSWORD: bizdin
+          POSTGRES_DB: bizdin
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U bizdin -d bizdin"
+          --health-interval 3s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Сборка образа
+        run: docker build -t bizdin-auyl-api:ci .
+      - name: 'Запуск на пустой базе: миграции и готовность'
+        run: |
+          docker run -d --name api --network host \
+            -e DATABASE_URL=postgres://bizdin:bizdin@127.0.0.1:5433/bizdin \
+            -e JWT_SECRET=ci-secret-ci-secret-ci-secret-ci-secret-00 \
+            -e MIGRATE_ON_START=true -e PORT=4000 \
+            bizdin-auyl-api:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4000/health/ready >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4000/health/ready
+          curl -fsS http://127.0.0.1:4000/api/v1/setup | grep -q '"needed":true'
+      - name: Журнал контейнера
+        if: ${{ failure() }}
+        run: docker logs api
