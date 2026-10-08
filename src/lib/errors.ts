@@ -38,6 +38,12 @@ export const preconditionFailed = (title: string, detail?: string, extra?: Recor
 export const unprocessable = (code: string, title: string, detail?: string, extra?: Record<string, unknown>) =>
   new AppError(422, code, title, detail, extra);
 
+/** Слишком много неверных попыток подряд: учётная запись на паузе. */
+export const tooManyAttempts = (pauseMs: number) =>
+  new AppError(429, 'auth.too_many_attempts', 'Слишком много неверных попыток', `Попробуйте снова через ${Math.max(1, Math.ceil(pauseMs / 1000))} с.`, {
+    retryAfter: Math.ceil(pauseMs / 1000),
+  });
+
 /** Код ошибки Postgres из исключения драйвера (postgres.js или обёртки drizzle). */
 export function pgCode(err: unknown): string | undefined {
   let cur: unknown = err;

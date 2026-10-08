@@ -154,3 +154,24 @@ describe('найм и права', () => {
     expect(approvers.every((d) => d.position === 'Управляющий' || d.position === 'Администратор')).toBe(true);
   });
 });
+
+describe('подбор пароля и PIN', () => {
+  it('после пяти неверных паролей - пауза только этой учётной записи, соседи с того же адреса входят', async () => {
+    for (let i = 0; i < 5; i++) expect((await tryLogin(app, 'callcenter2', 'не-тот-пароль')).status).toBe(401);
+    const paused = await tryLogin(app, 'callcenter2', 'demo12345');
+    expect(paused.status).toBe(429);
+    expect(paused.body.code).toBe('auth.too_many_attempts');
+    expect(paused.body.detail).toMatch(/через \d+ с/);
+    // Тот же адрес гостиницы, другой сотрудник - входит без помех.
+    expect((await tryLogin(app, 'callcenter', 'demo12345')).status).toBe(200);
+  });
+
+  it('планшет: подбор PIN ставит паузу логину, остальные отмечаются', async () => {
+    const pin = (login: string, value: string) =>
+      app.inject({ method: 'POST', url: '/api/v1/kiosk/clock', payload: { propertyId: owner.propertyId, login, pin: value } });
+    for (let i = 0; i < 5; i++) expect((await pin('events', '0000')).statusCode).toBe(401);
+    const paused = await pin('events', '1234');
+    expect(paused.statusCode).toBe(429);
+    expect((await pin('night', '1234')).statusCode).toBe(200);
+  });
+});

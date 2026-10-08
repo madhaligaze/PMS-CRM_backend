@@ -10,7 +10,8 @@ import { ACCESS_LABELS, type Access } from '../../lib/access.ts';
 import { verifySecret } from '../../lib/crypto.ts';
 import { toCsv } from '../../lib/csv.ts';
 import { addDays, localDate, monthRange, zonedToUtc } from '../../lib/dates.ts';
-import { badRequest, conflict, forbidden, notFound, unauthorized } from '../../lib/errors.ts';
+import { pauseLeft, recordFailure, recordSuccess } from '../../lib/attempts.ts';
+import { badRequest, conflict, forbidden, notFound, tooManyAttempts, unauthorized } from '../../lib/errors.ts';
 import { newId } from '../../lib/ids.ts';
 
 const P = z.object({ propertyId: z.uuid() });
@@ -198,7 +199,8 @@ export const attendanceRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({ kind: Kind.optional() }).default({}),
         response: { 200: MyStatusDto },
       },
-      config: { permission: 'attendance.self', rateLimit: { max: 20, timeWindow: '1 minute' } },
+      // Отметки с телефонов идут через один Wi-Fi гостиницы: лимит по адресу - только от сбойного клиента.
+      config: { permission: 'attendance.self', rateLimit: { max: 600, timeWindow: '1 minute' } },
     },
     async (req) => {
       const ctx = ctxOf(req);
@@ -426,9 +428,13 @@ export const kioskRoutes: FastifyPluginAsyncZod = async (app) => {
         body: z.object({ propertyId: z.uuid(), login: z.string().min(1).max(100), pin: z.string().regex(/^\d{4,6}$/) }),
         response: { 200: z.object({ name: z.string(), kind: Kind, at: z.iso.datetime() }) },
       },
-      config: { rateLimit: { max: 12, timeWindow: '1 minute' } },
+      // Планшет один на всех: в пересменку отмечаются десятки людей подряд. Подбор PIN держит пауза по логину.
+      config: { rateLimit: { max: 240, timeWindow: '1 minute' } },
     },
     async (req) => {
+      const attemptKey = `kiosk:${req.body.propertyId}:${req.body.login.trim().toLowerCase()}`;
+      const pause = pauseLeft(attemptKey);
+      if (pause) throw tooManyAttempts(pause);
       const [u] = await db
         .select({ user: users, property: properties })
         .from(users)
@@ -438,8 +444,10 @@ export const kioskRoutes: FastifyPluginAsyncZod = async (app) => {
         .limit(1);
       // Отметиться может каждый работающий сотрудник: уволенный и заблокированный - нет.
       if (!u || !u.user.pinHash || !u.user.isActive || u.user.archivedAt || !(await verifySecret(req.body.pin, u.user.pinHash))) {
+        recordFailure(attemptKey);
         throw unauthorized('kiosk.invalid', 'Неверный логин или PIN');
       }
+      recordSuccess(attemptKey);
       const ctx = { orgId: u.property.orgId, propertyId: u.property.id, requestId: String(req.id), ip: req.ip ?? null, actor: { id: u.user.id, name: u.user.fullName } };
       const kind = await db.transaction((tx) => clock(tx, ctx, u.user.id, 'pin', undefined, 'kiosk'));
       if (!kind) throw badRequest('kiosk.failed', 'Не удалось отметиться');

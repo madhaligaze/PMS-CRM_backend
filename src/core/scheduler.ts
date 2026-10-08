@@ -119,7 +119,8 @@ async function dailyHousekeeping(app: FastifyInstance) {
           kind: 'stayover',
           businessDate: day,
           dueAt: dueDaily,
-          note: 'Ежедневная уборка: гость живёт',
+          // Вид задачи уже говорит «ежедневная»: примечание остаётся для слов людей.
+          note: null,
         });
         // Занятый номер утром требует обслуживания.
         await tx

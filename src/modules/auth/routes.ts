@@ -161,9 +161,11 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           totpCode: z.string().max(10).optional(),
           client: ClientType,
         }),
-        response: { 200: Tokens, 401: Problem },
+        response: { 200: Tokens, 401: Problem, 429: Problem },
       },
-      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+      // Вся гостиница - один адрес: в пересменку входят десятки людей. Подбор пароля
+      // держит пауза по учётной записи (lib/attempts.ts), адрес - только от потока.
+      config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
     },
     async (req, reply) => {
       const tokens = await auth.login(app.deps, req.body, metaOf(req, req.body.client));
@@ -183,7 +185,8 @@ export const authRoutes: FastifyPluginAsyncZod = async (app) => {
           .default({ client: 'mobile' }),
         response: { 200: Tokens, 401: Problem, 409: Problem },
       },
-      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      // Каждая открытая вкладка каждого сотрудника обновляет токен: с одного адреса гостиницы их много.
+      config: { rateLimit: { max: 600, timeWindow: '1 minute' } },
     },
     async (req, reply) => {
       const client = req.body.client;

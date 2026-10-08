@@ -26,6 +26,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 const Line = z.object({ key: z.string(), label: z.string(), amount: z.number().int(), count: z.number().int() });
 const EventRow = z.object({
+  bookingId: z.uuid().nullable(),
   bookingNumber: z.number().int().nullable(),
   guest: z.string().nullable(),
   kind: z.string(),
@@ -155,31 +156,31 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
       const net = pays.filter((p) => p.kind === 'payment' || p.kind === 'refund').reduce((a, p) => a + sign(p.kind, p.storno) * Number(p.amount), 0);
       const refunds = pays.filter((p) => p.kind === 'refund' && !p.storno).reduce((a, p) => a + Number(p.amount), 0);
 
-      const cancels = await db.execute<{ number: number; guest: string; status: string; reason: string | null; by: string | null; at: Date; total: string }>(sql`
-        select b.number, g.last_name || ' ' || g.first_name as guest, b.status, b.cancel_reason as reason, u.full_name as by, b.cancelled_at as at,
+      const cancels = await db.execute<{ id: string; number: number; guest: string; status: string; reason: string | null; by: string | null; at: Date; total: string }>(sql`
+        select b.id, b.number, g.last_name || ' ' || g.first_name as guest, b.status, b.cancel_reason as reason, u.full_name as by, b.cancelled_at as at,
           b.accommodation_total as total
         from bookings b join guests g on g.id = b.guest_id left join users u on u.id = b.cancelled_by
         where b.property_id = ${ctx.propertyId} and b.status in ('cancelled','no_show')
           and (b.cancelled_at at time zone ${tz})::date = ${date}::date
         order by b.cancelled_at
       `);
-      const discounts = await db.execute<{ number: number; guest: string; mode: string; reason: string | null; by: string | null; at: Date; discount: string }>(sql`
-        select b.number, g.last_name || ' ' || g.first_name as guest, b.price_mode as mode, b.price_reason as reason,
+      const discounts = await db.execute<{ id: string; number: number; guest: string; mode: string; reason: string | null; by: string | null; at: Date; discount: string }>(sql`
+        select b.id, b.number, g.last_name || ' ' || g.first_name as guest, b.price_mode as mode, b.price_reason as reason,
           u.full_name as by, b.created_at as at, b.base_total - b.accommodation_total as discount
         from bookings b join guests g on g.id = b.guest_id left join users u on u.id = b.created_by
         where b.property_id = ${ctx.propertyId} and b.price_mode <> 'rate'
           and (b.created_at at time zone ${tz})::date = ${date}::date
         order by b.created_at
       `);
-      const stornos = await db.execute<{ number: number | null; guest: string | null; kind: string; amount: string; reason: string | null; by: string | null; at: Date }>(sql`
-        select b.number, g.last_name || ' ' || g.first_name as guest, 'Сторно оплаты ' || o.number as kind, p.amount, p.storno_reason as reason, u.full_name as by, p.created_at as at
+      const stornos = await db.execute<{ id: string | null; number: number | null; guest: string | null; kind: string; amount: string; reason: string | null; by: string | null; at: Date }>(sql`
+        select b.id, b.number, g.last_name || ' ' || g.first_name as guest, 'Сторно оплаты ' || o.number as kind, p.amount, p.storno_reason as reason, u.full_name as by, p.created_at as at
         from payments p
         join payments o on o.id = p.storno_of
         left join bookings b on b.id = p.booking_id left join guests g on g.id = b.guest_id
         left join users u on u.id = p.created_by
         where p.property_id = ${ctx.propertyId} and p.storno_of is not null and (p.created_at at time zone ${tz})::date = ${date}::date
         union all
-        select b.number, g.last_name || ' ' || g.first_name, 'Сторно начисления: ' || o.description, -f.amount, f.storno_reason, u.full_name, f.created_at
+        select b.id, b.number, g.last_name || ' ' || g.first_name, 'Сторно начисления: ' || o.description, -f.amount, f.storno_reason, u.full_name, f.created_at
         from folio_items f
         join folio_items o on o.id = f.storno_of
         join bookings b on b.id = f.booking_id join guests g on g.id = b.guest_id
@@ -198,6 +199,7 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
         guests: Number(mv?.guests ?? 0),
         revenue: { accommodation: nights.revenue, payments: net, refunds, byMethod },
         cancellations: cancels.map((c) => ({
+          bookingId: c.id,
           bookingNumber: c.number,
           guest: c.guest,
           kind: c.status === 'no_show' ? 'Незаезд' : 'Отмена',
@@ -207,6 +209,7 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
           at: at(c.at),
         })),
         discounts: discounts.map((d) => ({
+          bookingId: d.id,
           bookingNumber: d.number,
           guest: d.guest,
           kind: d.mode === 'special' ? 'Спеццена' : 'Скидка',
@@ -215,7 +218,7 @@ export const reportRoutes: FastifyPluginAsyncZod = async (app) => {
           by: d.by,
           at: at(d.at),
         })),
-        stornos: stornos.map((s) => ({ bookingNumber: s.number, guest: s.guest, kind: s.kind, amount: Number(s.amount), reason: s.reason, by: s.by, at: at(s.at) })),
+        stornos: stornos.map((s) => ({ bookingId: s.id, bookingNumber: s.number, guest: s.guest, kind: s.kind, amount: Number(s.amount), reason: s.reason, by: s.by, at: at(s.at) })),
       };
     },
   );

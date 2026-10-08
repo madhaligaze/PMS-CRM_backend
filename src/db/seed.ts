@@ -721,7 +721,11 @@ export async function seed(db: Db, log: (msg: string) => void = console.log) {
     }
     if (s.day === 0) break;
 
-    const closedAt = jitter(at(s.day + 1, '08:00'), 4);
+    // Смену закрывают перед открытием следующей. Сид, запущенный до 08:00, открывает
+    // сегодняшнюю смену раньше - вчерашняя закрывается до неё, а не в будущем.
+    const following = shifts[i + 1];
+    const planned = jitter(at(s.day + 1, '08:00'), 4);
+    const closedAt = following && planned.getTime() >= following.openedAt.getTime() ? new Date(following.openedAt.getTime() - 2 * 60_000) : planned;
     // Перед сменой выручку сдают бухгалтеру, в кассе остаётся размен.
     {
       const [open] = await db.select().from(cashShifts).where(eq(cashShifts.id, s.id));

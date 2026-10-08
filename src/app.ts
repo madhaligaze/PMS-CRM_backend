@@ -23,6 +23,7 @@ import { registerIdempotency } from './core/idempotency.ts';
 import { pruneUnusedSchemas } from './core/openapi-prune.ts';
 import { LocalFileStorage } from './core/storage.ts';
 import { createDb } from './db/client.ts';
+import { AppError } from './lib/errors.ts';
 import { newId } from './lib/ids.ts';
 import { TokenService } from './lib/tokens.ts';
 import { attendanceRoutes, kioskRoutes } from './modules/attendance/routes.ts';
@@ -37,6 +38,7 @@ import { guestRoutes } from './modules/guests/routes.ts';
 import { housekeepingRoutes } from './modules/housekeeping/routes.ts';
 import { maintenanceRoutes } from './modules/maintenance/routes.ts';
 import { API_VERSION, documentRoutes, metaRoutes } from './modules/meta/routes.ts';
+import { propertyCreateRoutes } from './modules/property/create.ts';
 import { propertyRoutes } from './modules/property/routes.ts';
 import { rateRoutes } from './modules/rates/routes.ts';
 import { reportRoutes } from './modules/reports/routes.ts';
@@ -102,9 +104,18 @@ export async function buildApp(config: Config, opts: { logger?: boolean } = {}):
   });
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } });
   await app.register(cookie);
+  // Общий предел на адрес - защита от зациклившегося клиента, а не от людей: вся
+  // гостиница с её компьютерами, телефонами горничных и планшетом - это один адрес.
   // В тестах десятки входов подряд с одного адреса - ограничение там мешает проверять логику.
   if (config.NODE_ENV !== 'test') {
-    await app.register(rateLimit, { global: true, max: 600, timeWindow: '1 minute' });
+    await app.register(rateLimit, {
+      global: true,
+      max: 6000,
+      timeWindow: '1 minute',
+      // Отказ - тем же problem+json по-русски, что и остальные ошибки, а не английской строкой плагина.
+      errorResponseBuilder: (_req, ctx) =>
+        new AppError(429, 'rate.limited', 'Слишком много запросов подряд', `Повторите через ${Math.max(1, Math.ceil(ctx.ttl / 1000))} с.`, { retryAfter: Math.ceil(ctx.ttl / 1000) }),
+    });
   }
 
   await app.register(swagger, {
@@ -150,6 +161,7 @@ export async function buildApp(config: Config, opts: { logger?: boolean } = {}):
       await api.register(meRoutes);
       await api.register(kioskRoutes);
       await api.register(fileContentRoutes);
+      await api.register(propertyCreateRoutes);
       await api.register(
         async (scoped) => {
           scoped.addHook('onRequest', propertyScopeHook(scoped));

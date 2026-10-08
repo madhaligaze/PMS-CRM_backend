@@ -317,11 +317,14 @@ describe('хозслужба', () => {
     const supervisor = await as(app, 'supervisor');
     const maid = await as(app, 'maid');
     const board = (await supervisor.get('/housekeeping/board')).body;
-    const target = board.rooms.find((r: any) => r.occupancy === 'free' && r.hkStatus !== 'repair');
-    const t = await supervisor.post('/housekeeping/tasks', { roomId: target.id, kind: 'request', note: 'Тест', assigneeId: board.staff.find((s: any) => s.position === 'Горничная').id });
+    const target = board.rooms.find((r: any) => r.occupancy !== 'blocked' && !r.dnd && r.hkStatus !== 'repair');
+    expect(target, 'нужен номер без «не беспокоить» и не на ремонте').toBeTruthy();
+    const maidId = (await maid.get('/api/v1/me')).body.id;
+    expect(board.staff.some((s: any) => s.id === maidId)).toBe(true);
+    const t = await supervisor.post('/housekeeping/tasks', { roomId: target.id, kind: 'request', note: 'Тест', assigneeId: maidId });
     expect(t.status).toBe(201);
     const mine = (await maid.get('/housekeeping/tasks')).body.find((x: any) => x.id === t.body.id);
-    if (!mine) return; // задача назначена другой горничной демо - сценарий ниже от её имени не пройдёт
+    expect(mine, 'горничная видит свою задачу').toBeTruthy();
     expect((await maid.post(`/housekeeping/tasks/${t.body.id}/start`)).body.status).toBe('in_progress');
     expect((await maid.post(`/housekeeping/tasks/${t.body.id}/finish`, {})).body.status).toBe('done');
     expect((await maid.post(`/housekeeping/tasks/${t.body.id}/inspect`, { ok: true })).status).toBe(403);

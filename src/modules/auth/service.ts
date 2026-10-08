@@ -4,7 +4,8 @@ import { audit, type AuditScope } from '../../core/audit.ts';
 import { cashRegisters, memberships, orgs, positions, properties, sessions, users } from '../../db/schema/index.ts';
 import { ACCESS_LABELS, allRights, cleanRights, effectiveRights, permissionsFor, type Access } from '../../lib/access.ts';
 import { hashSecret, randomToken, sha256, verifySecret } from '../../lib/crypto.ts';
-import { badRequest, conflict, unauthorized } from '../../lib/errors.ts';
+import { pauseLeft, recordFailure, recordSuccess } from '../../lib/attempts.ts';
+import { badRequest, conflict, tooManyAttempts, unauthorized } from '../../lib/errors.ts';
 import { newId } from '../../lib/ids.ts';
 import { generateTotpSecret, otpauthUrl, verifyTotp } from '../../lib/totp.ts';
 import { DEFAULT_CURRENCY, DEFAULT_SETTINGS, DEFAULT_TIMEZONE } from '../property/defaults.ts';
@@ -59,6 +60,10 @@ export async function login(
   input: { login: string; password: string; totpCode?: string | undefined },
   meta: SessionMeta & { requestId: string },
 ): Promise<IssuedTokens> {
+  // Пауза после серии неверных попыток - на учётную запись, не на адрес гостиницы.
+  const attemptKey = `login:${input.login.trim().toLowerCase()}`;
+  const pause = pauseLeft(attemptKey);
+  if (pause) throw tooManyAttempts(pause);
   const found = await deps.db
     .select()
     .from(users)
@@ -68,17 +73,25 @@ export async function login(
   const user = found[0];
   if (!user) {
     await dummyVerify(input.password);
+    recordFailure(attemptKey);
     throw unauthorized('auth.invalid_credentials', 'Неверный логин или пароль');
   }
   const ok = await verifySecret(input.password, user.passwordHash);
-  if (!ok) throw unauthorized('auth.invalid_credentials', 'Неверный логин или пароль');
+  if (!ok) {
+    recordFailure(attemptKey);
+    throw unauthorized('auth.invalid_credentials', 'Неверный логин или пароль');
+  }
   if (user.archivedAt) throw unauthorized('auth.user_disabled', 'Учётная запись закрыта', 'Если это ошибка, обратитесь к управляющему.');
   if (!user.isActive) throw unauthorized('auth.user_disabled', 'Вход заблокирован', 'Разблокировать может управляющий.');
 
   if (user.totpEnabledAt && user.totpSecret) {
     if (!input.totpCode) throw unauthorized('auth.totp_required', 'Введите код из приложения');
-    if (!verifyTotp(user.totpSecret, input.totpCode)) throw unauthorized('auth.totp_invalid', 'Код не подошёл');
+    if (!verifyTotp(user.totpSecret, input.totpCode)) {
+      recordFailure(attemptKey);
+      throw unauthorized('auth.totp_invalid', 'Код не подошёл');
+    }
   }
+  recordSuccess(attemptKey);
 
   const tokens = await issue(deps, user, newId(), meta);
   await deps.db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
